@@ -1,0 +1,283 @@
+Author: Ashwin Bhat
+
+#include <SPI.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <DHT.h>
+
+/* ================= OLED (SPI) ================= */
+/* THIS PART IS IDENTICAL TO YOUR WORKING TEST CODE */
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_DC     9
+#define OLED_CS     10
+#define OLED_RESET  8
+
+Adafruit_SSD1306 display(
+  SCREEN_WIDTH,
+  SCREEN_HEIGHT,
+  &SPI,
+  OLED_DC,
+  OLED_RESET,
+  OLED_CS
+);
+
+/* ================= BUTTONS ================= */
+#define BTN_UP     2
+#define BTN_DOWN   3
+#define BTN_ENTER  4
+
+/* ================= SENSOR PINS ================= */
+#define DHT_PIN     5
+#define TEST_PIN    6      // IR / Digital test
+#define TRIG_PIN    7
+#define ECHO_PIN    1      // unchanged as you requested
+
+#define DHTTYPE DHT11
+DHT dht(DHT_PIN, DHTTYPE);
+
+/* ================= STATES ================= */
+enum State {
+  MAIN_MENU,
+  PROTOCOL_SCREEN,
+  COMPONENT_MENU,
+
+  DHT_INFO,
+  IR_INFO,
+  ULTRASONIC_INFO,
+
+  DHT_SCREEN,
+  IR_SCREEN,
+  ULTRASONIC_SCREEN,
+
+  LOGIC_SCREEN
+};
+
+State state = MAIN_MENU;
+bool screenDrawn = false;
+int menuIndex = 0;
+
+/* ================= BUTTON HANDLER ================= */
+bool pressed(uint8_t pin) {
+  static uint32_t lastTime[10];
+  static bool lastState[10];
+
+  bool now = digitalRead(pin);
+  if (lastState[pin] == HIGH && now == LOW) {
+    if (millis() - lastTime[pin] > 250) {
+      lastTime[pin] = millis();
+      lastState[pin] = LOW;
+      return true;
+    }
+  }
+  if (now == HIGH) lastState[pin] = HIGH;
+  return false;
+}
+
+/* ================= OLED HELPER ================= */
+void oledClear() {
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0, 0);
+}
+
+/* ================= SETUP ================= */
+void setup() {
+  pinMode(BTN_UP, INPUT_PULLUP);
+  pinMode(BTN_DOWN, INPUT_PULLUP);
+  pinMode(BTN_ENTER, INPUT_PULLUP);
+
+  pinMode(TEST_PIN, INPUT_PULLUP);
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+
+  dht.begin();
+
+  /* === OLED INIT (FROM TEST CODE) === */
+  if (!display.begin(SSD1306_SWITCHCAPVCC)) {
+    while (1);
+  }
+
+  oledClear();
+  display.setTextSize(2);
+  display.setCursor(0, 20);
+  display.println("Pocket");
+  display.println("Tester");
+  display.display();
+  delay(1500);
+}
+
+/* ================= LOOP ================= */
+void loop() {
+
+  /* ---------- MAIN MENU ---------- */
+  if (state == MAIN_MENU) {
+    if (!screenDrawn) {
+      oledClear();
+      display.println("== MAIN MENU ==");
+      display.print(menuIndex == 0 ? "> " : "  "); display.println("Protocol");
+      display.print(menuIndex == 1 ? "> " : "  "); display.println("Component");
+      display.print(menuIndex == 2 ? "> " : "  "); display.println("Logic Probe");
+      display.display();
+      screenDrawn = true;
+    }
+
+    if (pressed(BTN_UP))   { menuIndex = (menuIndex + 2) % 3; screenDrawn = false; }
+    if (pressed(BTN_DOWN)) { menuIndex = (menuIndex + 1) % 3; screenDrawn = false; }
+
+    if (pressed(BTN_ENTER)) {
+      screenDrawn = false;
+      state = (menuIndex == 0) ? PROTOCOL_SCREEN :
+              (menuIndex == 1) ? COMPONENT_MENU :
+                                 LOGIC_SCREEN;
+    }
+  }
+
+  /* ---------- PROTOCOL MODE ---------- */
+  else if (state == PROTOCOL_SCREEN) {
+    if (!screenDrawn) {
+      oledClear();
+      display.println("Protocol Mode");
+      display.print("GPIO D6: ");
+      display.println(digitalRead(TEST_PIN) ? "HIGH" : "LOW");
+      display.println("\nENTER = Back");
+      display.display();
+      screenDrawn = true;
+    }
+
+    if (pressed(BTN_ENTER)) {
+      screenDrawn = false;
+      state = MAIN_MENU;
+    }
+  }
+
+  /* ---------- COMPONENT MENU ---------- */
+  else if (state == COMPONENT_MENU) {
+    if (!screenDrawn) {
+      oledClear();
+      display.println("Component Mode");
+      display.print(menuIndex == 0 ? "> " : "  "); display.println("DHT11");
+      display.print(menuIndex == 1 ? "> " : "  "); display.println("IR Sensor");
+      display.print(menuIndex == 2 ? "> " : "  "); display.println("Ultrasonic");
+      display.print(menuIndex == 3 ? "> " : "  "); display.println("< Back");
+      display.display();
+      screenDrawn = true;
+    }
+
+    if (pressed(BTN_UP))   { menuIndex = (menuIndex + 3) % 4; screenDrawn = false; }
+    if (pressed(BTN_DOWN)) { menuIndex = (menuIndex + 1) % 4; screenDrawn = false; }
+
+    if (pressed(BTN_ENTER)) {
+      screenDrawn = false;
+      if (menuIndex == 3) state = MAIN_MENU;
+      else if (menuIndex == 0) state = DHT_INFO;
+      else if (menuIndex == 1) state = IR_INFO;
+      else state = ULTRASONIC_INFO;
+    }
+  }
+
+  /* ---------- PIN INFO ---------- */
+  else if (state == DHT_INFO) {
+    oledClear();
+    display.println("DHT11");
+    display.println("DATA -> D5");
+    display.println("\nENTER to test");
+    display.display();
+    while (!pressed(BTN_ENTER));
+    state = DHT_SCREEN;
+    screenDrawn = false;
+  }
+
+  else if (state == IR_INFO) {
+    oledClear();
+    display.println("IR Sensor");
+    display.println("OUT -> D6");
+    display.println("\nENTER to test");
+    display.display();
+    while (!pressed(BTN_ENTER));
+    state = IR_SCREEN;
+    screenDrawn = false;
+  }
+
+  else if (state == ULTRASONIC_INFO) {
+    oledClear();
+    display.println("Ultrasonic");
+    display.println("TRIG -> D7");
+    display.println("ECHO -> D1");
+    display.println("\nENTER to test");
+    display.display();
+    while (!pressed(BTN_ENTER));
+    state = ULTRASONIC_SCREEN;
+    screenDrawn = false;
+  }
+
+  /* ---------- SENSOR RUN ---------- */
+  else if (state == DHT_SCREEN) {
+    oledClear();
+    display.println("Reading DHT11");
+    display.display();
+    delay(2000);
+
+    float t = dht.readTemperature();
+    float h = dht.readHumidity();
+
+    oledClear();
+    if (isnan(t) || isnan(h)) display.println("DHT ERROR");
+    else {
+      display.print("Temp: "); display.print(t); display.println(" C");
+      display.print("Hum : "); display.print(h); display.println(" %");
+    }
+    display.println("\nENTER = Back");
+    display.display();
+    while (!pressed(BTN_ENTER));
+    state = COMPONENT_MENU;
+    screenDrawn = false;
+  }
+
+  else if (state == IR_SCREEN) {
+    oledClear();
+    display.println("IR Sensor");
+    display.print("State: ");
+    display.println(digitalRead(TEST_PIN) ? "HIGH" : "LOW");
+    display.println("\nENTER = Back");
+    display.display();
+    while (!pressed(BTN_ENTER));
+    state = COMPONENT_MENU;
+    screenDrawn = false;
+  }
+
+  else if (state == ULTRASONIC_SCREEN) {
+    digitalWrite(TRIG_PIN, LOW); delayMicroseconds(2);
+    digitalWrite(TRIG_PIN, HIGH); delayMicroseconds(10);
+    digitalWrite(TRIG_PIN, LOW);
+
+    long d = pulseIn(ECHO_PIN, HIGH, 30000);
+    oledClear();
+    display.println("Ultrasonic");
+    if (d == 0) display.println("No Echo");
+    else {
+      display.print("Dist: ");
+      display.print(d * 0.034 / 2);
+      display.println(" cm");
+    }
+    display.println("\nENTER = Back");
+    display.display();
+    while (!pressed(BTN_ENTER));
+    state = COMPONENT_MENU;
+    screenDrawn = false;
+  }
+
+  /* ---------- LOGIC PROBE ---------- */
+  else if (state == LOGIC_SCREEN) {
+    oledClear();
+    display.println("Logic Probe");
+    display.print("D6: ");
+    display.println(digitalRead(TEST_PIN) ? "HIGH" : "LOW");
+    display.println("\nENTER = Back");
+    display.display();
+    while (!pressed(BTN_ENTER));
+    state = MAIN_MENU;
+    screenDrawn = false;
+  }
+}
